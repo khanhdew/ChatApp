@@ -1,0 +1,162 @@
+services:
+  db:
+    image: mongo
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - message_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_v8_container
+    user: root
+    environment:
+      - MYSQL_ROOT_PASSWORD=root123
+      - MYSQL_DATABASE=go_back_end
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./chat_app_001/init:/docker-entrypoint-initdb.d
+    networks:
+      - message_network
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    networks:
+      - message_network
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    ports:
+        - "8881:8080"
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=env-kafka-cluster
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    networks:
+      - message_network
+
+  redis:
+    image: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - message_network
+
+  apigateway:
+    image: khanhdew/apigateway
+    command: java -jar app.jar
+    ports:
+      - "8080:8080"
+    depends_on:
+      user-service:
+        condition: service_started
+      message-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+    environment:
+      - USER_SERVICE=http://user-service:8082
+      - EUREKA_URI=http://eureka-server:8761/eureka/
+    networks:
+      - message_network
+
+  eureka-server:
+      image: khanhdew/eureka-server
+      command: java -jar app.jar
+      ports:
+          - "8761:8761"
+      networks:
+          - message_network
+  message-service:
+    image: khanhdew/message-service
+    command: java -jar app.jar
+    ports:
+      - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+    environment:
+        - MONGO_URI=mongodb://db:27017/message
+        - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+        - REDIS_URL=redis://default@redis:6379
+        - USER_SERVICE_URL=http://user-service:8082
+        - EUREKA_URI=http://eureka-server:8761/eureka/
+    networks:
+      - message_network
+
+  notification-service:
+    image: khanhdew/notification-service
+    command: java -jar app.jar
+    ports:
+      - "8082:8080"
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+        - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+        - EUREKA_URI=http://eureka-server:8761/eureka/
+    networks:
+      - message_network
+
+  user-service:
+    build:
+      context: ./chat_app_001/be
+      dockerfile: Dockerfile
+    container_name: crm_chatapp_be
+    ports:
+      - "8083:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - message_network
+
+  msv_send_mail:
+    build:
+      context: ./chat_app_001/mservices/send_mail
+      dockerfile: Dockerfile
+    container_name: crm_chatapp_msv_send_mail
+    networks:
+      - message_network
+networks:
+    message_network:
+        driver: bridge
+
+volumes:
+  mongodb_data:
+  kafka_data:
+  mysql_data:

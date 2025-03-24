@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: apigateway
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      routes:
+        - id: user-service
+          uri: ${USER_SERVICE:http://localhost:8083}
+          predicates:
+            - Path=/api/v1/user/**, /api/v1/chat/**, /user/swagger/**
+          filters:
+            - StripPrefix=1
+            - RewritePath=/user/swagger/(?<segment>.*), /swagger/index.html
+        - id: message-service
+          uri: lb://MESSAGESERVICE
+          predicates:
+            - Path=/ ,/api/v1/messages/** , /api/v1/message/**, /api/v1/message, /ws/**, /app/**, /topic/**
+        - id: notification-service
+          uri: lb://NOTIFICATIONSERVICE
+          predicates:
+            - Path=/api/v1/token/**
+
+
+server:
+  port: 8080
+
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka/}
